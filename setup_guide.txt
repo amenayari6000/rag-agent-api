@@ -1,0 +1,42 @@
+RAG Project Setup on Windows
+================================
+
+1. Install uv (one time only)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+2. Verify uv
+uv --version
+
+3. Go to your project folder
+cd C:\Users\ayari\OneDrive\Bureau\rag
+
+4. Create a virtual environment
+uv venv
+
+5. Activate the virtual environment
+.\.venv\Scripts\Activate.ps1
+
+6. If PowerShell blocks activation, run this once
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+7. Install the required packages
+uv add langchain openai anthropic python-dotenv langchain-openai langchain-anthropic
+
+8. Check installed packages
+uv pip list
+
+9. Verify the imports
+python -c "from langchain_openai import ChatOpenAI; from langchain_anthropic import ChatAnthropic; print('ENV OK')"
+
+10. Create the environment file
+New-Item .env -ItemType File -Force
+
+11. Open the environment file
+notepad .env
+
+12. Add your API keys inside the .env file
+OPENAI_API_KEY=your_openai_key_here
+ANTHROPIC_API_KEY=your_anthropic_key_here
+
+13. Run your script
+uv run main.py
