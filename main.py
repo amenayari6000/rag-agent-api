@@ -2,18 +2,65 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-load_dotenv()
 
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+
+
+
+
+
+
+
+
+
+
+load_dotenv()
 
 app = FastAPI()
 
 
+# Request format for /chat
+class ChatRequest(BaseModel):
+    question: str
 
+
+# OpenAI model
+openai_key = os.getenv("OPENAI_API_KEY")
+
+if not openai_key:
+    raise RuntimeError("OPENAI_API_KEY is missing")
+
+llm = ChatOpenAI(
+    api_key=openai_key,
+    model="gpt-4o-mini",
+    temperature=0
+)
+
+
+# Chat endpoint
 @app.post("/chat")
-def chat():
-    return {"response": "what is 7*2"}
+def chat(request: ChatRequest):
+    try:
+        response = llm.invoke(request.question)
+
+        return {
+            "question": request.question,
+            "response": response.content
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+# Health check
+@app.get("/health")
 
 
 @app.get("/health")
