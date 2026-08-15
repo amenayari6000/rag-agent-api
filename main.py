@@ -10,6 +10,12 @@ from langchain_anthropic import ChatAnthropic
 app = FastAPI()
 
 
+
+@app.post("/chat")
+def chat():
+    return {"response": "what is 7*2"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
