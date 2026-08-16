@@ -1,30 +1,1269 @@
+# Production RAG AI API --- Project Documentation
+
+## 1. Project overview
+
+This project is a production-oriented **RAG (Retrieval-Augmented
+Generation) API** built with Python.
+
+The application is being developed locally in VS Code,
+version-controlled with Git/GitHub, tested with Docker Desktop, and
+deployed to Render.
+
+### Current stage
+
+The API currently has:
+
+-   FastAPI web application
+-   Uvicorn ASGI server
+-   `/health` health endpoint
+-   `/` root endpoint
+-   `/chat` POST endpoint
+-   LangChain integration
+-   OpenAI `gpt-4o-mini` integration
+-   Docker/Docker Compose configuration for local deployment
+-   GitHub repository
+-   Render production deployment
+
+At the current testing stage, `/chat` sends the user's question directly
+to OpenAI.
+
+``` text
+Browser / Client
+      |
+      | POST /chat
+      v
+   FastAPI
+      |
+      v
+   LangChain
+      |
+      v
+OpenAI GPT-4o-mini
+      |
+      v
+   Response
+```
+
+The next major step is to connect the existing RAG pipeline and Chroma
+vector store before the LLM call.
+
+------------------------------------------------------------------------
+
+## 2. Main technologies
+
+  Technology        Role
+  ----------------- ---------------------------------------
+  Python            Main programming language
+  FastAPI           HTTP API framework
+  Uvicorn           ASGI server that runs FastAPI
+  LangChain         LLM/RAG integration and orchestration
+  OpenAI            LLM provider
+  Chroma            Vector database for retrieval
+  uv                Python project/dependency management
+  Docker            Containerization
+  Docker Compose    Local container execution
+  Git/GitHub        Version control and source repository
+  Render            Production hosting
+  Swagger/OpenAPI   Interactive API documentation/testing
+
+------------------------------------------------------------------------
+
+## 3. Project structure
+
+The current project is organized around the `rag` directory:
+
+``` text
+rag/
+├── main.py
+├── Dockerfile
+├── docker-compose.yml
+├── render.yaml
+├── pyproject.toml
+├── uv.lock
+├── .dockerignore
+├── .gitignore
+├── .env
+│
+├── docs/
+├── chroma_store/
+│
+├── document_loaders.py
+├── rag_pipeline.py
+├── row_embeding.py
+├── text_splitters.py
+├── vector_stores.py
+│
+├── README.md
+└── setup_guide.txt
+```
+
+Files such as `.venv`, `.env`, `__pycache__`, and local editor files
+should not be committed to GitHub.
+
+------------------------------------------------------------------------
+
+# 4. FastAPI application
+
+`main.py` is the entry point of the web API.
+
+A working OpenAI chat version is:
+
+``` python
 import os
-import tempfile
+
 from dotenv import load_dotenv
-from langchain_community.document_loaders import TextLoader
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
+app = FastAPI()
 
-def load_text_file():
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as temp_file:
-        temp_file.write(
-            b"Hello, this is a sample text file.\n"
-            b"This file is used to demonstrate the TextLoader."
-        )
-        temp_file_path = temp_file.name
 
+class ChatRequest(BaseModel):
+    question: str
+
+
+openai_key = os.getenv("OPENAI_API_KEY")
+
+if not openai_key:
+    raise RuntimeError("OPENAI_API_KEY is missing")
+
+
+llm = ChatOpenAI(
+    api_key=openai_key,
+    model="gpt-4o-mini",
+    temperature=0
+)
+
+
+@app.post("/chat")
+def chat(request: ChatRequest):
     try:
-        loader = TextLoader(temp_file_path)
-        documents = loader.load()
+        response = llm.invoke(request.question)
 
-        for doc in documents:
-            print("Document Content:")
-            print(doc)
-            print(doc.page_content)
-    finally:
-        os.remove(temp_file_path)
+        return {
+            "question": request.question,
+            "response": response.content
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
-if __name__ == "__main__":
-    load_text_file()
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/")
+def root():
+    return {"message": "RAG API is running"}
+```
+
+------------------------------------------------------------------------
+
+# 5. How `/chat` works
+
+The client sends:
+
+``` http
+POST /chat
+```
+
+with:
+
+``` json
+{
+  "question": "What is 7 * 2?"
+}
+```
+
+FastAPI validates the JSON using:
+
+``` python
+class ChatRequest(BaseModel):
+    question: str
+```
+
+Then the application calls:
+
+``` python
+response = llm.invoke(request.question)
+```
+
+LangChain sends the question to OpenAI.
+
+The API returns:
+
+``` json
+{
+  "question": "What is 7 * 2?",
+  "response": "14"
+}
+```
+
+The exact wording of the response can vary because it is generated by
+the model.
+
+------------------------------------------------------------------------
+
+# 6. Why the original `/chat` did not use OpenAI
+
+The original function was:
+
+``` python
+@app.post("/chat")
+def chat():
+    return {"response": "what is 7*2"}
+```
+
+That function returned a hard-coded string. It never called OpenAI.
+
+There was also an OpenAI call inside a `main()` function. However, when
+Uvicorn starts the application using the FastAPI object:
+
+``` text
+main:app
+```
+
+the request handler needs to invoke the LLM itself.
+
+The corrected design is:
+
+``` text
+POST /chat
+   |
+   v
+FastAPI
+   |
+   v
+llm.invoke(question)
+   |
+   v
+OpenAI
+   |
+   v
+response
+```
+
+------------------------------------------------------------------------
+
+# 7. Swagger / OpenAPI
+
+FastAPI automatically creates interactive API documentation.
+
+Local:
+
+``` text
+http://localhost:8000/docs
+```
+
+Production:
+
+``` text
+https://YOUR-RENDER-SERVICE.onrender.com/docs
+```
+
+To test `/chat`:
+
+1.  Open `POST /chat`.
+2.  Click **Try it out**.
+3.  Enter:
+
+``` json
+{
+  "question": "What is 7 * 2?"
+}
+```
+
+4.  Click **Execute**.
+5.  Inspect the response.
+
+If the required `question` field is missing, FastAPI returns:
+
+``` text
+422 Validation Error
+```
+
+That means the request body did not satisfy the Pydantic schema.
+
+------------------------------------------------------------------------
+
+# 8. FastAPI and Uvicorn
+
+They have different responsibilities.
+
+### FastAPI
+
+FastAPI defines the application and HTTP routes:
+
+``` python
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+### Uvicorn
+
+Uvicorn is the ASGI server that runs the FastAPI application:
+
+``` text
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Here:
+
+-   `main` = `main.py`
+-   `app` = the FastAPI object inside `main.py`
+-   `0.0.0.0` = listen on the container network interface
+-   `8000` = local application port
+
+Relationship:
+
+``` text
+Python code
+   ↓
+FastAPI
+   ↓
+Uvicorn
+   ↓
+HTTP
+   ↓
+Browser / Client
+```
+
+------------------------------------------------------------------------
+
+# 9. Docker
+
+Docker packages the application and its environment into a container.
+
+The container can include:
+
+``` text
+Python
+uv
+FastAPI
+Uvicorn
+LangChain
+OpenAI libraries
+Application code
+```
+
+Docker is therefore different from FastAPI and different from OpenAI.
+
+-   FastAPI = application/API framework
+-   Uvicorn = server
+-   Docker = packaging/runtime environment
+-   OpenAI = LLM provider
+-   Render = hosting platform
+
+------------------------------------------------------------------------
+
+# 10. Dockerfile
+
+For the current project structure, where `main.py` is in the root
+directory, use:
+
+``` dockerfile
+FROM python:3.14-slim
+
+WORKDIR /app
+
+RUN useradd --create-home appuser     && chown -R appuser:appuser /app
+
+RUN pip install --no-cache-dir uv
+
+COPY --chown=appuser:appuser pyproject.toml .
+COPY --chown=appuser:appuser uv.lock .
+
+USER appuser
+
+RUN uv sync --frozen --no-dev
+
+COPY --chown=appuser:appuser . .
+
+EXPOSE 8000
+
+CMD ["sh", "-c", ".venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+```
+
+### Important correction
+
+The previous incorrect command was effectively trying to run:
+
+``` text
+uvicorn run uvicorn app.main:app
+```
+
+which caused:
+
+``` text
+Error: Got unexpected extra arguments
+```
+
+The current project has `main.py` in the root, so the correct module is:
+
+``` text
+main:app
+```
+
+not:
+
+``` text
+app.main:app
+```
+
+------------------------------------------------------------------------
+
+# 11. Docker Compose
+
+For local execution:
+
+``` yaml
+services:
+  agent-api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+```
+
+The healthcheck URL must be:
+
+``` text
+http://localhost:8000/health
+```
+
+It must not contain Markdown link syntax.
+
+------------------------------------------------------------------------
+
+# 12. Local Docker workflow
+
+Stop old containers:
+
+``` powershell
+docker compose down
+```
+
+Build and run:
+
+``` powershell
+docker compose up --build
+```
+
+Check status:
+
+``` powershell
+docker compose ps
+```
+
+Open Swagger:
+
+``` text
+http://localhost:8000/docs
+```
+
+Health endpoint:
+
+``` text
+http://localhost:8000/health
+```
+
+Expected:
+
+``` json
+{
+  "status": "ok"
+}
+```
+
+------------------------------------------------------------------------
+
+# 13. Docker COPY issue that was fixed
+
+The earlier Dockerfile contained:
+
+``` dockerfile
+COPY app/ app/
+```
+
+but the actual project did not have an `app/` directory.
+
+The project has:
+
+``` text
+rag/
+└── main.py
+```
+
+Therefore the Dockerfile now copies the project root:
+
+``` dockerfile
+COPY --chown=appuser:appuser . .
+```
+
+This matches the actual project structure.
+
+------------------------------------------------------------------------
+
+# 14. `.dockerignore`
+
+Use:
+
+``` text
+.venv
+.env
+.git
+.gitignore
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+```
+
+The `.env` file should not be copied into the Docker image.
+
+------------------------------------------------------------------------
+
+# 15. Environment variables and API keys
+
+The application requires:
+
+``` text
+OPENAI_API_KEY
+```
+
+For local development, it can be stored in `.env`.
+
+Example:
+
+``` text
+OPENAI_API_KEY=your_key_here
+```
+
+The real key must never be committed to GitHub.
+
+For production, configure the key in Render's environment variables.
+
+------------------------------------------------------------------------
+
+# 16. Git and GitHub
+
+The project is stored in GitHub.
+
+Git provides version control:
+
+``` text
+Working directory
+       ↓
+git add
+       ↓
+git commit
+       ↓
+git push
+       ↓
+GitHub
+```
+
+Typical workflow:
+
+``` powershell
+git status
+git add .
+git commit -m "Update RAG API"
+git push
+```
+
+GitHub acts as the source repository for deployment.
+
+------------------------------------------------------------------------
+
+# 17. First Render deployment: Python runtime
+
+The first Render deployment used Render's Python runtime.
+
+Architecture:
+
+``` text
+GitHub
+   ↓
+Render
+   ↓
+Python Runtime
+   ↓
+Dependencies
+   ↓
+Uvicorn
+   ↓
+FastAPI
+   ↓
+OpenAI
+```
+
+With:
+
+``` yaml
+runtime: python
+```
+
+Render manages the Python environment.
+
+The Dockerfile is not used for that production service.
+
+This is a valid production deployment method.
+
+------------------------------------------------------------------------
+
+# 18. Docker deployment to Render
+
+A Docker-based Render deployment uses the Dockerfile.
+
+Architecture:
+
+``` text
+GitHub
+   ↓
+Render
+   ↓
+Docker build
+   ↓
+Docker image
+   ↓
+Docker container
+   ↓
+Uvicorn
+   ↓
+FastAPI
+   ↓
+OpenAI
+```
+
+A Docker-oriented `render.yaml` can be:
+
+``` yaml
+services:
+  - type: web
+    name: rag-agent-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: APP_ENV
+        value: production
+
+      - key: LOG_LEVEL
+        value: INFO
+```
+
+Do not put the real OpenAI key in this file.
+
+------------------------------------------------------------------------
+
+# 19. Python Runtime vs Docker Runtime
+
+## Python Runtime
+
+``` text
+GitHub
+   ↓
+Render Python environment
+   ↓
+Dependencies
+   ↓
+Uvicorn
+   ↓
+FastAPI
+```
+
+Render prepares the Python runtime.
+
+## Docker Runtime
+
+``` text
+GitHub
+   ↓
+Render
+   ↓
+Dockerfile
+   ↓
+Docker image
+   ↓
+Container
+   ↓
+Uvicorn
+   ↓
+FastAPI
+```
+
+The Dockerfile controls more of the environment.
+
+The FastAPI application code can remain the same.
+
+------------------------------------------------------------------------
+
+# 20. Local vs production
+
+### Local Python
+
+``` text
+Windows
+   ↓
+Python / .venv
+   ↓
+FastAPI
+   ↓
+Uvicorn
+   ↓
+localhost:8000
+```
+
+### Local Docker
+
+``` text
+Windows
+   ↓
+Docker Desktop
+   ↓
+Docker container
+   ↓
+FastAPI + Uvicorn
+   ↓
+localhost:8000
+```
+
+### Production Python
+
+``` text
+Internet
+   ↓
+Render
+   ↓
+Python runtime
+   ↓
+FastAPI + Uvicorn
+   ↓
+OpenAI
+```
+
+### Production Docker
+
+``` text
+Internet
+   ↓
+Render
+   ↓
+Docker container
+   ↓
+FastAPI + Uvicorn
+   ↓
+OpenAI
+```
+
+------------------------------------------------------------------------
+
+# 21. Current RAG modules
+
+The repository contains modules for the RAG system, including:
+
+``` text
+document_loaders.py
+text_splitters.py
+row_embeding.py
+vector_stores.py
+rag_pipeline.py
+chroma_store/
+```
+
+Their conceptual roles are:
+
+### Document loading
+
+``` text
+Documents
+   ↓
+Document Loader
+```
+
+### Chunking
+
+``` text
+Document
+   ↓
+Text Chunks
+```
+
+### Embeddings
+
+``` text
+Text Chunk
+   ↓
+Embedding Model
+   ↓
+Vector
+```
+
+### Vector storage
+
+``` text
+Vectors
+   ↓
+Chroma
+```
+
+### Retrieval
+
+``` text
+Question
+   ↓
+Similarity Search
+   ↓
+Relevant Chunks
+```
+
+### Generation
+
+``` text
+Question + Relevant Context
+            ↓
+           LLM
+            ↓
+         Answer
+```
+
+------------------------------------------------------------------------
+
+# 22. Target complete RAG flow
+
+The final `/chat` endpoint should eventually work like:
+
+``` text
+User question
+      ↓
+FastAPI /chat
+      ↓
+RAG pipeline
+      ↓
+Create query representation
+      ↓
+Search Chroma
+      ↓
+Retrieve relevant document chunks
+      ↓
+Build prompt with context
+      ↓
+OpenAI
+      ↓
+Final answer
+      ↓
+FastAPI
+      ↓
+User
+```
+
+The current direct OpenAI test is:
+
+``` text
+User
+   ↓
+FastAPI
+   ↓
+OpenAI
+   ↓
+Answer
+```
+
+The RAG version adds retrieval:
+
+``` text
+User
+   ↓
+FastAPI
+   ↓
+Retriever
+   ↓
+Chroma
+   ↓
+Relevant context
+   ↓
+OpenAI
+   ↓
+Answer
+```
+
+------------------------------------------------------------------------
+
+# 23. Health check
+
+The API exposes:
+
+``` http
+GET /health
+```
+
+Response:
+
+``` json
+{
+  "status": "ok"
+}
+```
+
+This is useful for Docker and hosting platforms because they can check
+whether the application is alive.
+
+------------------------------------------------------------------------
+
+# 24. Why `0.0.0.0` is used
+
+Inside a container, Uvicorn should listen on:
+
+``` text
+0.0.0.0
+```
+
+rather than only:
+
+``` text
+127.0.0.1
+```
+
+This allows traffic arriving through the container network to reach the
+application.
+
+------------------------------------------------------------------------
+
+# 25. Port handling
+
+Locally:
+
+``` text
+localhost:8000
+```
+
+Docker Compose maps:
+
+``` yaml
+ports:
+  - "8000:8000"
+```
+
+which means:
+
+``` text
+Host port 8000
+      ↓
+Container port 8000
+```
+
+On Render, the platform provides the `PORT` environment variable.
+
+The Dockerfile therefore uses:
+
+``` text
+--port ${PORT:-8000}
+```
+
+This means:
+
+-   use Render's `PORT` in production
+-   use `8000` when `PORT` is not set locally
+
+------------------------------------------------------------------------
+
+# 26. Security
+
+Never commit:
+
+``` text
+.env
+OPENAI_API_KEY
+passwords
+private credentials
+```
+
+Use:
+
+``` text
+Local:
+.env
+
+Production:
+Render Environment Variables
+```
+
+The `.dockerignore` should exclude `.env`.
+
+------------------------------------------------------------------------
+
+# 27. Development and deployment workflow
+
+Recommended workflow:
+
+``` text
+1. Develop locally
+       ↓
+2. Test FastAPI
+       ↓
+3. Test /health
+       ↓
+4. Test /chat
+       ↓
+5. Test Docker locally
+       ↓
+6. git add
+       ↓
+7. git commit
+       ↓
+8. git push
+       ↓
+9. Render deployment
+       ↓
+10. Test production /health
+       ↓
+11. Test production /chat
+       ↓
+12. Connect RAG retrieval
+       ↓
+13. Test complete RAG system
+```
+
+------------------------------------------------------------------------
+
+# 28. Current project status
+
+Completed:
+
+-   Python project
+-   FastAPI application
+-   `/health`
+-   `/`
+-   Swagger/OpenAPI
+-   Uvicorn
+-   `uv` dependency management
+-   Dockerfile
+-   Docker Compose
+-   Local Docker troubleshooting
+-   Git/GitHub repository
+-   Render deployment
+-   OpenAI integration
+-   `/chat` request model
+-   Production API testing
+
+Current `/chat` stage:
+
+``` text
+POST /chat
+   ↓
+Question
+   ↓
+OpenAI GPT-4o-mini
+   ↓
+Answer
+```
+
+Next major milestone:
+
+``` text
+POST /chat
+   ↓
+RAG pipeline
+   ↓
+Chroma retrieval
+   ↓
+Relevant context
+   ↓
+OpenAI
+   ↓
+Final answer
+```
+
+------------------------------------------------------------------------
+
+# 29. Final architecture
+
+The intended production architecture is:
+
+``` text
+                         INTERNET
+                            |
+                            v
+                     Render Web Service
+                            |
+                     Docker Container
+                            |
+                         Uvicorn
+                            |
+                         FastAPI
+                            |
+                         POST /chat
+                            |
+                            v
+                      RAG Pipeline
+                            |
+              +-------------+-------------+
+              |                           |
+              v                           v
+        Vector Retrieval            User Question
+              |
+              v
+        Chroma Vector Store
+              |
+              v
+       Relevant Document Chunks
+              |
+              +-------------+
+                            |
+                            v
+                    LangChain / LLM
+                            |
+                            v
+                    OpenAI GPT Model
+                            |
+                            v
+                       Final Answer
+                            |
+                            v
+                         Browser
+```
+
+------------------------------------------------------------------------
+
+# 30. Useful commands
+
+### Docker
+
+``` powershell
+docker compose up --build
+```
+
+``` powershell
+docker compose down
+```
+
+``` powershell
+docker compose ps
+```
+
+### Git
+
+``` powershell
+git status
+```
+
+``` powershell
+git add .
+```
+
+``` powershell
+git commit -m "Update RAG API"
+```
+
+``` powershell
+git push
+```
+
+### Local API
+
+``` text
+http://localhost:8000/
+http://localhost:8000/health
+http://localhost:8000/docs
+```
+
+------------------------------------------------------------------------
+
+# 31. Final summary
+
+This project is evolving from a simple FastAPI + OpenAI API into a
+production RAG system.
+
+The responsibilities are separated as follows:
+
+``` text
+Python
+  = programming language
+
+FastAPI
+  = API/application framework
+
+Uvicorn
+  = server that runs FastAPI
+
+LangChain
+  = LLM/RAG integration
+
+Chroma
+  = vector database/retrieval
+
+OpenAI
+  = language model
+
+Docker
+  = containerization/environment
+
+Git
+  = version control
+
+GitHub
+  = source repository
+
+Render
+  = production hosting
+```
+
+The current successful path is:
+
+``` text
+Browser
+   ↓
+FastAPI /chat
+   ↓
+LangChain
+   ↓
+OpenAI GPT-4o-mini
+   ↓
+Response
+```
+
+The final RAG path will be:
+
+``` text
+Browser
+   ↓
+FastAPI /chat
+   ↓
+RAG Retriever
+   ↓
+Chroma Vector Store
+   ↓
+Relevant Context
+   ↓
+OpenAI
+   ↓
+Answer
+```
+
+That final architecture is the main production goal of the project.
